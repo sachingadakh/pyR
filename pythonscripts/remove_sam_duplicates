@@ -1,0 +1,88 @@
+#!/usr/bin/env python2
+
+"""
+	Remove reads mapped to the same location from SAM/BAM files.
+	By default, a maximum of two reads are allowed at the same location, irrespective of strand and sequence
+"""
+
+from __future__ import print_function
+import sys
+sys.path.append('/home/tejext/lib/argparse-1.4.0-py2.6.egg/')
+sys.path.append('/home/tejext/lib/pysam-0.8.3-py2.6-linux-x86_64.egg/')
+from argparse import ArgumentParser
+from collections import defaultdict
+
+
+try:
+	import pysam
+except ImportError:
+	print("Pysam module is not installed. Run 'pip install pysam' first!", file=sys.stderr)
+	sys.exit()
+
+parser = ArgumentParser(description=__doc__)
+
+inputfile = parser.add_mutually_exclusive_group(required=True)
+inputfile.add_argument('-s', '--sam', type=str, help='SAM input and output', metavar="<SAM FILE>")
+inputfile.add_argument('-b', '--bam', type=str, help='BAM input and output', metavar="<BAM FILE>")
+
+reads = parser.add_mutually_exclusive_group()
+reads.add_argument('-iu', '--ignore-unmapped', help='Avoid reading unmapped reads from sorted BAM input (improves processing time). Does not affect SAM files', action='store_false', dest='readflag', default=False)
+reads.add_argument('-a', '--all-reads', help='Process all reads till end of file (on both sorted and unsorted input)', action='store_true', dest='readflag')
+
+parser.add_argument('-m', '--max', type=int, help='maximum number of duplicates allowed (default: 2)', metavar="INT", default=2)
+parser.add_argument('-o', '--out', type=str, help='output file (default: STDOUT)', metavar='FILE', default='-')
+parser.add_argument('-v', '--verbose', help="display the progress", action='store_true', default=False)
+parser.add_argument('-S', '--strand-wise', help='consider reads as duplicates only if mapped to same strand', action='store_true', default=False)
+parser.add_argument('-u', '--unique', help='consider reads as duplicates only if no sequence mismatches', action='store_true', default=False)
+args = parser.parse_args()
+
+def processSamFile(file, format='sam'):
+	count = defaultdict(int)
+	totalReads = 0
+	unmappedReads = 0
+	dupReads = 0
+	finalReads = 0
+
+	if format == 'sam':
+		samfile = pysam.AlignmentFile(file, 'r')
+		outStream = pysam.AlignmentFile(args.out, 'wh', template=samfile)
+	elif format == 'bam':
+		samfile = pysam.AlignmentFile(file, 'rb')
+		outStream = pysam.AlignmentFile(args.out, 'wb', template=samfile)
+	else:
+		sys.exit("Unknown input filetype specified!")
+
+	for read in samfile.fetch(until_eof=args.readflag):
+		totalReads += 1
+		if args.verbose:
+			if totalReads % 1000000 == 0:
+				print("Processed %d reads" % (totalReads), file=sys.stderr)
+		if read.is_unmapped:
+			unmappedReads += 1
+			continue
+		else:
+			key = '_'.join([str(read.reference_id), str(read.reference_start),str(read.reference_end)])
+			
+			if args.strand_wise:
+				if read.is_reverse:
+					key += '_R'
+				else:
+					key += '_F'
+			if args.unique:
+				key += '_' 
+				key += read.seq
+			
+			count[key] += 1
+			if count[key] > args.max:
+				dupReads += 1
+				continue
+			else:
+				finalReads += 1
+				outStream.write(read)
+
+	print("Total number of reads: %d\nUnmapped reads: %d\nDuplicate reads: %d\nReads after filtering: %d\n" % (totalReads, unmappedReads, dupReads, finalReads), file=sys.stderr)
+
+if args.sam:
+	processSamFile(args.sam)
+elif args.bam:
+	processSamFile(args.bam, format='bam')
