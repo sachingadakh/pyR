@@ -51,7 +51,7 @@ def getArgs():
 # Returns coverage of a BED entry for a given BAM file
 def getCoverage(bamfile, bedEntry):
     l = bedEntry.strip().split('\t')
-    ref, start, stop = l[0:3]
+    ref, start, stop = l[0:2]
     try:
         coverage = bamfile.count(reference=ref, start=int(start), end=int(stop))
     except ValueError:
